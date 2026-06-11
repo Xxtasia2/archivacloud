@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 from botocore.exceptions import ClientError
 from backend.models import UploadRequest, generate_safe_key
 
-# 1. Cargar variables de entorno
-load_dotenv()
+# 1. Cargar variables de entorno explícitamente desde la raíz
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+load_dotenv(dotenv_path=env_path, override=True)
 
 # Fail-Fast: Crash inmediato si faltan variables obligatorias
 BUCKET_NAME: str = os.environ["BUCKET_NAME"]
