@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from botocore.exceptions import ClientError
-from models import UploadRequest, generate_safe_key
+from backend.models import UploadRequest, generate_safe_key
 
 # 1. Cargar variables de entorno
 load_dotenv()
