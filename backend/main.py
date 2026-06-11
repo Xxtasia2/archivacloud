@@ -2,21 +2,22 @@ import os
 import boto3
 import logging
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, status, Body
-from pydantic import ValidationError
+from fastapi import FastAPI, HTTPException, status, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from botocore.exceptions import ClientError
 from models import UploadRequest, generate_safe_key
 
-# 1. Cargar variables de entorno (con valores default hardcodeados por problemas de permisos)
+# 1. Cargar variables de entorno
 load_dotenv()
 
-BUCKET_NAME: str = os.getenv("BUCKET_NAME", "archivacloud-p02-temp")
-AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
+# Fail-Fast: Crash inmediato si faltan variables obligatorias
+BUCKET_NAME: str = os.environ["BUCKET_NAME"]
+AWS_REGION: str = os.environ["AWS_REGION"]
 
-# 3. Variable booleana para controlar el uso del mock
-USE_MOCK_S3: bool = True
+# Mock dinámico controlado por .env
+USE_MOCK_S3: bool = os.getenv("USE_MOCK_S3", "false").lower() == "true"
 
-# Sistema de fallback (mock) para desarrollo local
 class MockS3Client:
     def generate_presigned_post(self, Bucket, Key, Conditions=None, ExpiresIn=300):
         """Simula la respuesta de boto3 para la generación de presigned POST"""
@@ -25,18 +26,24 @@ class MockS3Client:
             "fields": {"key": Key}
         }
 
-# 2. Inicializar el cliente (Mock o Real)
 if USE_MOCK_S3:
     s3_client = MockS3Client()
 else:
-    # Se asume que AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_SESSION_TOKEN están en el entorno
+    # Se asume que las credenciales están configuradas en el entorno
     s3_client = boto3.client("s3", region_name=AWS_REGION)
 
-# Inicialización básica de la app FastAPI
 app = FastAPI(
     title="ArchivaCloud API",
-    description="API con configuración S3 y sistema Mock"
+    description="API con configuración S3 segura y sistema Mock"
 )
+
+# Exception handler global para ValidationError de Pydantic (SEC-07)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": "Error de validación: tipo o tamaño incorrecto"}
+    )
 
 @app.get("/healthz", summary="Health check del sistema")
 def health_check():
@@ -45,19 +52,9 @@ def health_check():
 logger = logging.getLogger(__name__)
 
 @app.post("/api/upload/presigned-url", summary="Generar presigned URL para subida a S3")
-async def get_presigned_url(body: dict = Body(...)):
-    # 1. Validar el body usando UploadRequest y capturar ValidationError
-    try:
-        req_data = UploadRequest(**body)
-    except ValidationError as e:
-        logger.warning(f"Error de validación Pydantic: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Error de validación en los datos proporcionados."
-        )
-
-    # 2. Obtener ruta segura
-    safe_key = generate_safe_key(req_data.fileName)
+async def get_presigned_url(body: UploadRequest):
+    # 2. Obtener ruta segura a partir del fileType (SEC-03)
+    safe_key = generate_safe_key(body.fileType)
 
     # 3. Retornar Mock simulado si está activo
     if USE_MOCK_S3:
@@ -102,4 +99,3 @@ async def get_presigned_url(body: dict = Body(...)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno del servidor."
         )
-

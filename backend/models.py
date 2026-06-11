@@ -1,6 +1,5 @@
 from pydantic import BaseModel, field_validator
 import uuid
-import pathlib
 
 class UploadRequest(BaseModel):
     fileName: str
@@ -22,22 +21,19 @@ class UploadRequest(BaseModel):
             raise ValueError("El tamaño del archivo debe ser mayor a 0 y máximo de 15 MB (15728640 bytes)")
         return value
 
-def generate_safe_key(original_filename: str) -> str:
+def generate_safe_key(file_type: str) -> str:
     """
-    Genera una ruta segura para S3 basada en un UUID4 y la 
-    extensión del archivo original (forzada a ser alfanumérica).
-    Evita riesgos de Path Traversal al no usar el nombre original.
+    Genera una ruta segura para S3 basada en un UUID4 y derivando la 
+    extensión a partir del MIME type validado.
+    Evita riesgos de Path Traversal al ignorar el nombre original (SEC-03).
     """
-    # Extraer la extensión sin el punto inicial
-    ext = pathlib.Path(original_filename).suffix.lstrip('.')
-    
-    # Filtrar solo caracteres alfanuméricos en la extensión
-    safe_ext = "".join(c for c in ext if c.isalnum())
-    
-    # Fallback si no tiene extensión o si tenía caracteres no válidos
-    if not safe_ext:
-        safe_ext = "bin"
+    mime_to_ext = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/gif": "gif"
+    }
+    ext = mime_to_ext.get(file_type, "bin")
         
     safe_uuid = uuid.uuid4()
     
-    return f"uploads/{safe_uuid}.{safe_ext}"
+    return f"uploads/{safe_uuid}.{ext}"
