@@ -3,6 +3,7 @@ import boto3
 import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from botocore.exceptions import ClientError
@@ -27,6 +28,27 @@ class MockS3Client:
             "fields": {"key": Key}
         }
 
+    def list_objects_v2(self, Bucket, Prefix=""):
+        """Simula la respuesta de boto3 para listar objetos en S3"""
+        return {
+            "Contents": [
+                {
+                    "Key": "uploads/mock-test-image.jpg",
+                    "Size": 204800,
+                    "LastModified": "2026-01-15T10:30:00Z"
+                }
+            ]
+        }
+
+    def generate_presigned_url(self, ClientMethod, Params=None, ExpiresIn=3600):
+        """Simula la respuesta de boto3 para generar presigned GET URL"""
+        key = Params.get("Key", "unknown") if Params else "unknown"
+        return f"http://mock-s3-url.local/{key}?signature=mock"
+
+    def delete_object(self, Bucket, Key):
+        """Simula la respuesta de boto3 para eliminar un objeto en S3"""
+        return {"ResponseMetadata": {"HTTPStatusCode": 204}}
+
 if USE_MOCK_S3:
     s3_client = MockS3Client()
 else:
@@ -36,6 +58,15 @@ else:
 app = FastAPI(
     title="ArchivaCloud API",
     description="API con configuración S3 segura y sistema Mock"
+)
+
+# CORS: Permitir peticiones desde el frontend de desarrollo
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["*"],
 )
 
 # Exception handler global para ValidationError de Pydantic (SEC-07)
@@ -99,4 +130,115 @@ async def get_presigned_url(body: UploadRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno del servidor."
+        )
+
+
+@app.get("/api/files", summary="Listar archivos subidos a S3 con URLs firmadas")
+async def list_files():
+    # Retornar datos simulados si el mock está activo
+    if USE_MOCK_S3:
+        return {
+            "files": [
+                {
+                    "key": "uploads/mock-test-image.jpg",
+                    "size": 204800,
+                    "lastModified": "2026-01-15T10:30:00Z",
+                    "url": "http://mock-s3-url.local/uploads/mock-test-image.jpg?signature=mock"
+                }
+            ]
+        }
+
+    # Lógica real con boto3
+    try:
+        response = s3_client.list_objects_v2(
+            Bucket=BUCKET_NAME,
+            Prefix="uploads/"
+        )
+
+        contents = response.get("Contents", [])
+        files = []
+
+        for obj in contents:
+            key = obj["Key"]
+
+            # Omitir la ruta raíz "uploads/" si S3 la devuelve como objeto
+            if key == "uploads/":
+                continue
+
+            # Generar URL firmada temporal para lectura segura (bucket con bloqueo público)
+            presigned_url = s3_client.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={"Bucket": BUCKET_NAME, "Key": key},
+                ExpiresIn=3600
+            )
+
+            files.append({
+                "key": key,
+                "size": obj.get("Size", 0),
+                "lastModified": obj["LastModified"].isoformat()
+                    if hasattr(obj["LastModified"], "isoformat")
+                    else str(obj["LastModified"]),
+                "url": presigned_url
+            })
+
+        return {"files": files}
+
+    except ClientError as e:
+        # SEC-07: Ocultar el traceback al cliente
+        logger.error(f"ClientError de AWS al listar archivos: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno del servidor al obtener archivos."
+        )
+    except Exception as e:
+        logger.error(f"Error inesperado al listar archivos: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno del servidor al obtener archivos."
+        )
+
+
+@app.delete("/api/files/{file_id}", summary="Eliminar un archivo de S3 de forma segura")
+async def delete_file(file_id: str):
+    # SEC-03: Mitigación de Path Traversal — rechazar identificadores con caracteres peligrosos
+    if "/" in file_id or "\\" in file_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identificador de archivo inválido."
+        )
+
+    # Construcción segura de la llave completa
+    safe_key = f"uploads/{file_id}"
+
+    # Retornar respuesta simulada si el mock está activo
+    if USE_MOCK_S3:
+        return {
+            "message": f"Archivo '{file_id}' eliminado exitosamente (modo mock).",
+            "key": safe_key
+        }
+
+    # Lógica real con boto3
+    try:
+        s3_client.delete_object(
+            Bucket=BUCKET_NAME,
+            Key=safe_key
+        )
+
+        return {
+            "message": f"Archivo '{file_id}' eliminado exitosamente.",
+            "key": safe_key
+        }
+
+    except ClientError as e:
+        # SEC-07: Ocultar el traceback al cliente
+        logger.error(f"ClientError de AWS al eliminar archivo: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno del servidor al eliminar el archivo."
+        )
+    except Exception as e:
+        logger.error(f"Error inesperado al eliminar archivo: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno del servidor al eliminar el archivo."
         )

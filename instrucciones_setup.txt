@@ -1,0 +1,45 @@
+# Instrucciones para Levantar el Proyecto ArchivaCloud
+
+## 1. Requisitos Previos
+- Python 3.8 o superior instalado en tu sistema.
+- pip (gestor de paquetes de Python).
+
+## 2. Configuración del Entorno Virtual
+Es muy recomendable usar un entorno virtual para aislar las dependencias.
+
+1. Abre una terminal (CMD, PowerShell o la terminal de tu editor) y ubícate en la raíz del proyecto.
+   Ruta: c:\Users\Duvan\Desktop\archivacloud
+
+2. Crea el entorno virtual ejecutando:
+   python -m venv venv
+
+3. Activa el entorno virtual:
+   - En Windows:
+     venv\Scripts\activate
+   - En macOS / Linux:
+     source venv/bin/activate
+
+4. Instala las dependencias del proyecto:
+   pip install -r requirements.txt
+
+## 3. Configuración de Variables de Entorno (.env)
+El proyecto requiere ciertas configuraciones, como las credenciales de AWS S3.
+
+1. En la raíz del proyecto, busca el archivo llamado `.env.example`.
+2. Haz una copia de ese archivo y nómbrala exactamente como `.env`.
+   (Puedes hacerlo manualmente copiando y pegando, o en terminal con el comando: `copy .env.example .env`).
+3. Abre el archivo `.env` con un editor de texto y rellena tus datos:
+   - Configura `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY` con tus credenciales.
+   - Configura `AWS_REGION` y `BUCKET_NAME` según corresponda.
+   - Si deseas correr el proyecto sin conectarte realmente a S3 (modo simulación), asegúrate de establecer `USE_MOCK_S3=true`.
+
+## 4. Ejecutar el Servidor (Backend en FastAPI)
+Con las dependencias instaladas y el entorno configurado, levanta la aplicación:
+
+1. Asegúrate de estar en la raíz del proyecto y que tu entorno virtual siga activado.
+2. Ejecuta el comando:
+   uvicorn backend.main:app --reload
+
+3. Verás en la consola que el servidor se inicia. Para comprobar que todo funciona:
+   - Health check: Abre en tu navegador http://127.0.0.1:8000/healthz
+   - Documentación de la API (Swagger): Abre http://127.0.0.1:8000/docs
