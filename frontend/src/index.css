@@ -1,0 +1,8 @@
+/* Reset handled by App.css — keep this file minimal */
+:root {
+  color-scheme: dark;
+}
+
+#root {
+  min-height: 100vh;
+}
