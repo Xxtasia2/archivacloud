@@ -65,7 +65,10 @@ app = FastAPI(
 # CORS: Permitir peticiones desde el frontend de desarrollo
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://archivacloud.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
