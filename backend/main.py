@@ -1,12 +1,14 @@
 import os
+import io
 import boto3
 import logging
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, status, Request
+from fastapi import FastAPI, HTTPException, UploadFile, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from botocore.exceptions import ClientError
+from PIL import Image
 from backend.models import UploadRequest, generate_safe_key
 
 # 1. Cargar variables de entorno explícitamente desde la raíz
@@ -85,8 +87,8 @@ logger = logging.getLogger(__name__)
 
 @app.post("/api/upload/presigned-url", summary="Generar presigned URL para subida a S3")
 async def get_presigned_url(body: UploadRequest):
-    # 2. Obtener ruta segura a partir del fileType (SEC-03)
-    safe_key = generate_safe_key(body.fileType)
+    # 2. Obtener ruta segura a partir del fileName y fileType (SEC-03)
+    safe_key = generate_safe_key(body.fileName, body.fileType)
 
     # 3. Retornar Mock simulado si está activo
     if USE_MOCK_S3:
@@ -241,4 +243,62 @@ async def delete_file(file_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno del servidor al eliminar el archivo."
+        )
+
+
+@app.post("/api/compress", summary="Comprimir una imagen usando Pillow")
+async def compress_image(file: UploadFile):
+    """
+    Recibe un archivo de imagen (JPEG o PNG), lo comprime en memoria
+    usando Pillow y retorna la imagen comprimida como respuesta binaria.
+    """
+    # Validar que el Content-Type sea una imagen soportada
+    allowed_types = {
+        "image/jpeg": ("JPEG", "image/jpeg"),
+        "image/png": ("PNG", "image/png"),
+    }
+
+    content_type = file.content_type or ""
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Formato no soportado para compresión. Se permiten: {', '.join(allowed_types.keys())}",
+        )
+
+    pil_format, media_type = allowed_types[content_type]
+
+    try:
+        # Leer bytes del archivo subido en memoria
+        file_bytes = await file.read()
+        image = Image.open(io.BytesIO(file_bytes))
+
+        # Preparar buffer de salida
+        output_buffer = io.BytesIO()
+
+        # Comprimir según el formato
+        save_kwargs = {"format": pil_format, "optimize": True}
+        if pil_format == "JPEG":
+            save_kwargs["quality"] = 60
+        elif pil_format == "PNG":
+            # Para PNG, compress_level va de 0 (sin compresión) a 9 (máxima)
+            save_kwargs["compress_level"] = 6
+
+        image.save(output_buffer, **save_kwargs)
+        output_buffer.seek(0)
+
+        return Response(
+            content=output_buffer.getvalue(),
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'inline; filename="compressed_{file.filename}"'
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al comprimir imagen con Pillow: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno del servidor al comprimir la imagen.",
         )
