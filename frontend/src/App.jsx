@@ -25,8 +25,17 @@ function formatDate(dateStr) {
   }
 }
 
+/**
+ * Extrae el nombre limpio de archivo desde la key de S3.
+ * Formato esperado: 'uploads/a1b2c3d4-nombre_real.png'
+ * Retorna: 'nombre_real.png'
+ */
 function extractFileName(key) {
-  return key.split('/').pop() || key;
+  // Quitar el prefijo 'uploads/'
+  const withoutPrefix = key.replace(/^uploads\//, '');
+  // Quitar el UUID corto de 8 caracteres + guion (ej: 'a1b2c3d4-')
+  const withoutUuid = withoutPrefix.replace(/^[a-f0-9]{8}-/, '');
+  return withoutUuid || key;
 }
 
 export default function App() {
@@ -216,7 +225,7 @@ export default function App() {
               <div className="loader-bar">
                 <div className="loader-bar-inner"></div>
               </div>
-              <p className="loader-text">Subiendo archivo...</p>
+              <p className="loader-text">Comprimiendo y subiendo archivo...</p>
             </>
           )}
 

@@ -1,26 +1,77 @@
 const API_BASE = "http://localhost:8000";
 
+// Umbral de compresión: 1 MB
+const COMPRESS_THRESHOLD = 1048576;
+
 // ─────────────────────────────────────────────
-// 1. Subida en dos pasos (Presigned URL + S3)
+// 0. Compresión de imagen vía backend (Pillow)
 // ─────────────────────────────────────────────
 
 /**
- * Paso 1: Solicita una presigned URL al backend.
- * Paso 2: Sube el archivo directamente a S3 usando FormData.
+ * Envía una imagen al endpoint de compresión y devuelve un nuevo File.
+ * Solo se invoca para JPEG/PNG que superen 1 MB.
+ *
+ * @param {File} file - Archivo original del usuario.
+ * @returns {Promise<File>} Archivo comprimido como objeto File.
+ */
+async function compressImage(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE}/api/compress`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => null);
+    throw new Error(
+      errorData?.detail ||
+        `Error al comprimir imagen (HTTP ${res.status})`
+    );
+  }
+
+  const blob = await res.blob();
+  // Crear un nuevo File con el mismo nombre y tipo para mantener compatibilidad
+  return new File([blob], file.name, { type: file.type });
+}
+
+// ─────────────────────────────────────────────
+// 1. Subida en tres pasos (Compresión + Presigned URL + S3)
+// ─────────────────────────────────────────────
+
+/**
+ * Paso A: Si es JPG/PNG y pesa > 1 MB, comprime vía /api/compress.
+ * Paso B: Solicita una presigned URL al backend con los datos del archivo final.
+ * Paso C: Sube el archivo directamente a S3 usando FormData.
  *
  * @param {File} file - Objeto File del input del usuario.
  * @returns {Promise<{key: string, publicUrl: string}>} Datos del archivo subido.
  */
 export async function uploadFile(file) {
   try {
-    // ── Paso 1: Obtener presigned POST desde el backend ──
+    // ── Paso A: Compresión condicional ──
+    let finalFile = file;
+    const compressibleTypes = ["image/jpeg", "image/png"];
+
+    if (compressibleTypes.includes(file.type) && file.size > COMPRESS_THRESHOLD) {
+      console.info(
+        `🗜️ Comprimiendo imagen (${(file.size / 1024 / 1024).toFixed(2)} MB)...`
+      );
+      finalFile = await compressImage(file);
+      console.info(
+        `✅ Imagen comprimida: ${(finalFile.size / 1024 / 1024).toFixed(2)} MB`
+      );
+    }
+
+    // ── Paso B: Obtener presigned POST desde el backend ──
     const presignedRes = await fetch(`${API_BASE}/api/upload/presigned-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        fileName: file.name,
-        fileType: file.type,
-        fileSize: file.size,
+        fileName: finalFile.name,
+        fileType: finalFile.type,
+        fileSize: finalFile.size,
       }),
     });
 
@@ -34,7 +85,7 @@ export async function uploadFile(file) {
 
     const { presignedUrl, key, publicUrl } = await presignedRes.json();
 
-    // ── Paso 2: Subir archivo directo a S3 con FormData ──
+    // ── Paso C: Subir archivo directo a S3 con FormData ──
     const formData = new FormData();
 
     // Adjuntar todos los campos de autorización que devolvió S3
@@ -43,7 +94,7 @@ export async function uploadFile(file) {
     });
 
     // El archivo SIEMPRE va al final del FormData (requisito de S3)
-    formData.append("file", file);
+    formData.append("file", finalFile);
 
     const s3Res = await fetch(presignedUrl.url, {
       method: "POST",
